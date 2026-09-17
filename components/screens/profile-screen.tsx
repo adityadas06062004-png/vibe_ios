@@ -90,7 +90,7 @@ export function ProfileScreen() {
         <div className="mt-5 flex items-center gap-3 rounded-3xl border border-primary/25 bg-aurora p-5">
           <Crown className="size-6 text-primary" />
           <div className="flex-1">
-            <p className="font-semibold">Aura Pro active</p>
+            <p className="font-semibold">Vibe Pro active</p>
             <p className="text-xs text-muted-foreground">
               Unlimited ratings · ad-free · pro insights
             </p>
@@ -114,7 +114,7 @@ export function ProfileScreen() {
           </span>
           <div className="flex-1">
             <p className="font-display text-base font-semibold">
-              Upgrade to Aura Pro
+              Upgrade to Vibe Pro
             </p>
             <p className="text-xs text-muted-foreground">
               Unlimited ratings, pro insights & no ads

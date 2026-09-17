@@ -16,10 +16,10 @@ export function ShareSheet({
   const [copied, setCopied] = useState(false)
 
   async function share() {
-    const text = `My outfit just scored ${result.score}/100 on Aura ✨ (${result.vibe})`
+    const text = `My outfit just scored ${result.score}/100 on Vibe ✨ (${result.vibe})`
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
-        await navigator.share({ title: 'Aura Style Score', text })
+        await navigator.share({ title: 'Vibe Style Score', text })
         return
       } catch {
         /* user dismissed */
@@ -31,7 +31,7 @@ export function ShareSheet({
   function copy() {
     try {
       navigator.clipboard?.writeText(
-        `My outfit scored ${result.score}/100 on Aura — rate yours!`,
+        `My outfit scored ${result.score}/100 on Vibe — rate yours!`,
       )
     } catch {
       /* ignore */
@@ -75,7 +75,7 @@ export function ShareSheet({
           <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between">
             <div>
               <p className="text-[10px] tracking-[0.25em] text-primary">
-                AURA · AI STYLE
+                VIBE · AI STYLE
               </p>
               <p className="font-display text-xl font-semibold">
                 {result.vibe}

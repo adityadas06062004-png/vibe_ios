@@ -16,7 +16,7 @@ const playfair = Playfair_Display({
 })
 
 export const metadata: Metadata = {
-  title: 'Aura — AI Style Rater',
+  title: 'Vibe — AI Style Rater',
   description:
     'Snap your outfit, get an instant AI style score with pro insights, share your look, and shop pieces that complete it.',
   generator: 'v0.app',

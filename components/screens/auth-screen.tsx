@@ -55,7 +55,7 @@ export function AuthScreen() {
             <Sparkles className="size-5" />
           </span>
           <span className="font-display text-lg font-semibold tracking-tight">
-            Aura
+            Vibe
           </span>
         </div>
 

@@ -58,7 +58,7 @@ export function PaywallSheet() {
             <X className="size-4" />
           </button>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/20 px-3 py-1 text-xs font-semibold text-primary">
-            <Crown className="size-3.5" /> AURA PRO
+            <Crown className="size-3.5" /> VIBE PRO
           </span>
           <h2 className="mt-3 font-display text-2xl font-semibold leading-tight text-balance">
             Dress like the top 1%.

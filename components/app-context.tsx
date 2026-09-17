@@ -303,9 +303,9 @@ export function getResult(image: string): ScanResult {
   }
 }
 
-const ACCOUNTS_KEY = 'aura:accounts'
-const SESSION_KEY = 'aura:session'
-const PREFS_KEY = 'aura:prefs'
+const ACCOUNTS_KEY = 'vibe:accounts'
+const SESSION_KEY = 'vibe:session'
+const PREFS_KEY = 'vibe:prefs'
 
 type Account = User & { password: string }
 

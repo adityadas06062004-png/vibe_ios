@@ -61,6 +61,26 @@ export type User = {
   initials: string
 }
 
+// A single rated look, recorded after every completed scan. This is the
+// real data source for level, streak, average score, and Style DNA — none
+// of that is hardcoded anymore.
+export type HistoryEntry = {
+  id: string
+  image: string
+  score: number
+  vibe: string
+  date: string // ISO timestamp
+}
+
+export type Stats = {
+  ratingsCount: number
+  avgScore: number
+  level: number
+  streak: number
+  topVibe: string | null
+  vibeCounts: Record<string, number>
+}
+
 export const PRODUCTS: Product[] = [
   {
     id: 'p1',
@@ -303,11 +323,73 @@ export function getResult(image: string): ScanResult {
   }
 }
 
+// --- Stats, derived entirely from real history. No hardcoded "Level 4". ---
+export function computeStreak(history: HistoryEntry[]): number {
+  if (history.length === 0) return 0
+  const daySet = new Set(history.map((h) => new Date(h.date).toDateString()))
+  const cursor = new Date()
+  // If nothing logged today yet, the streak can still count through
+  // yesterday — it only breaks once a full day is missed.
+  if (!daySet.has(cursor.toDateString())) {
+    cursor.setDate(cursor.getDate() - 1)
+  }
+  let streak = 0
+  while (daySet.has(cursor.toDateString())) {
+    streak++
+    cursor.setDate(cursor.getDate() - 1)
+  }
+  return streak
+}
+
+export function computeStats(history: HistoryEntry[]): Stats {
+  const ratingsCount = history.length
+  const avgScore = ratingsCount
+    ? Math.round(history.reduce((sum, h) => sum + h.score, 0) / ratingsCount)
+    : 0
+  // Level up every 5 rated looks — starts at 1, no ceiling.
+  const level = 1 + Math.floor(ratingsCount / 5)
+  const vibeCounts: Record<string, number> = {}
+  for (const h of history) vibeCounts[h.vibe] = (vibeCounts[h.vibe] ?? 0) + 1
+  let topVibe: string | null = null
+  let topCount = 0
+  for (const [vibe, count] of Object.entries(vibeCounts)) {
+    if (count > topCount) {
+      topCount = count
+      topVibe = vibe
+    }
+  }
+  return {
+    ratingsCount,
+    avgScore,
+    level,
+    streak: computeStreak(history),
+    topVibe,
+    vibeCounts,
+  }
+}
+
 const ACCOUNTS_KEY = 'vibe:accounts'
 const SESSION_KEY = 'vibe:session'
 const PREFS_KEY = 'vibe:prefs'
+const MAX_FREE_ADS_PER_DAY = 3
 
 type Account = User & { password: string }
+
+type Prefs = {
+  isPro: boolean
+  credits: number
+  savedIds: string[]
+  lastResetDate: string
+  adsWatchedToday: number
+}
+
+function todayStr() {
+  return new Date().toDateString()
+}
+
+function historyKey(email: string) {
+  return `vibe:history:${email}`
+}
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -328,6 +410,15 @@ function readJSON<T>(key: string, fallback: T): T {
     return raw ? (JSON.parse(raw) as T) : fallback
   } catch {
     return fallback
+  }
+}
+
+function writeJSON(key: string, value: unknown) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* storage unavailable — fail silently, nothing user-facing to break */
   }
 }
 
@@ -354,11 +445,19 @@ type AppState = {
   scanning: boolean
   startScan: (image: string) => boolean
   finishScan: () => void
+  recordScan: (result: ScanResult) => void
   cameraOpen: boolean
   openCamera: () => void
   closeCamera: () => void
   savedIds: string[]
   toggleSaved: (id: string) => void
+  history: HistoryEntry[]
+  stats: Stats
+  outOfCreditsNotice: boolean
+  dismissOutOfCreditsNotice: () => void
+  adsWatchedToday: number
+  maxFreeAdsPerDay: number
+  watchAd: () => boolean
 }
 
 const Ctx = createContext<AppState | null>(null)
@@ -376,29 +475,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cameraOpen, setCameraOpen] = useState(false)
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [pendingImage, setPendingImage] = useState<string | null>(null)
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [outOfCreditsNotice, setOutOfCreditsNotice] = useState(false)
+  const [adsWatchedToday, setAdsWatchedToday] = useState(0)
+  const [lastResetDate, setLastResetDate] = useState(todayStr())
 
   // Hydrate persisted session + prefs after mount (avoids SSR mismatch).
   useEffect(() => {
     const session = readJSON<User | null>(SESSION_KEY, null)
-    if (session) setUser(session)
-    const prefs = readJSON<{ isPro: boolean; credits: number; savedIds: string[] }>(
-      PREFS_KEY,
-      { isPro: false, credits: 3, savedIds: [] },
-    )
+    const prefs = readJSON<Prefs>(PREFS_KEY, {
+      isPro: false,
+      credits: 3,
+      savedIds: [],
+      lastResetDate: todayStr(),
+      adsWatchedToday: 0,
+    })
+
+    // "3 free ratings every day" only means something if it actually resets.
+    const isNewDay = prefs.lastResetDate !== todayStr()
+    const hydratedCredits = isNewDay ? 3 : prefs.credits
+    const hydratedAds = isNewDay ? 0 : prefs.adsWatchedToday
+
+    if (session) {
+      setUser(session)
+      setHistory(readJSON<HistoryEntry[]>(historyKey(session.email), []))
+    }
     setPro(prefs.isPro)
-    setCredits(prefs.credits)
+    setCredits(hydratedCredits)
+    setAdsWatchedToday(hydratedAds)
     setSavedIds(prefs.savedIds ?? [])
+    setLastResetDate(todayStr())
     setAuthReady(true)
   }, [])
 
   // Persist prefs whenever they change (after hydration).
   useEffect(() => {
-    if (!authReady || typeof window === 'undefined') return
-    window.localStorage.setItem(
-      PREFS_KEY,
-      JSON.stringify({ isPro, credits, savedIds }),
-    )
-  }, [authReady, isPro, credits, savedIds])
+    if (!authReady) return
+    writeJSON(PREFS_KEY, {
+      isPro,
+      credits,
+      savedIds,
+      lastResetDate,
+      adsWatchedToday,
+    } satisfies Prefs)
+  }, [authReady, isPro, credits, savedIds, lastResetDate, adsWatchedToday])
+
+  const stats = useMemo(() => computeStats(history), [history])
 
   const value = useMemo<AppState>(() => {
     const openPaywall = (reason = '') => {
@@ -433,10 +555,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           initials: initials(name),
         }
         const next = [...accounts, { ...newUser, password }]
-        if (typeof window !== 'undefined')
-          window.localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next))
+        writeJSON(ACCOUNTS_KEY, next)
         persistSession(newUser)
         setUser(newUser)
+        // Brand-new account: no history, full fresh daily allowance.
+        setHistory([])
+        setCredits(3)
+        setAdsWatchedToday(0)
+        setLastResetDate(todayStr())
         return { ok: true }
       },
       signIn: ({ email, password }) => {
@@ -454,6 +580,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         persistSession(u)
         setUser(u)
+        setHistory(readJSON<HistoryEntry[]>(historyKey(u.email), []))
         return { ok: true }
       },
       signOut: () => {
@@ -461,13 +588,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setUser(null)
         setTab('scan')
         setResult(null)
+        setHistory([])
       },
       tab,
       setTab,
       isPro,
       setPro: (v: boolean) => {
         setPro(v)
-        if (v) setPaywallOpen(false)
+        if (v) {
+          setPaywallOpen(false)
+          setOutOfCreditsNotice(false)
+        }
       },
       credits,
       addCredits: (n: number) => setCredits((c) => c + n),
@@ -481,7 +612,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       startScan: (image: string) => {
         if (!isPro) {
           if (credits <= 0) {
-            openPaywall('You are out of free ratings for today.')
+            // Close the camera first so the paywall never silently stacks
+            // underneath it — the user only sees it once the camera is gone.
+            setCameraOpen(false)
+            setOutOfCreditsNotice(true)
             return false
           }
           setCredits((c) => c - 1)
@@ -490,10 +624,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setResult(null)
         setScanning(true)
         setCameraOpen(false)
+        setOutOfCreditsNotice(false)
         setTab('scan')
         return true
       },
       finishScan: () => setScanning(false),
+      recordScan: (r: ScanResult) => {
+        if (!user) return
+        const entry: HistoryEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          image: r.image,
+          score: r.score,
+          vibe: r.vibe,
+          date: new Date().toISOString(),
+        }
+        setHistory((prev) => {
+          const next = [entry, ...prev]
+          writeJSON(historyKey(user.email), next)
+          return next
+        })
+      },
       cameraOpen,
       openCamera: () => setCameraOpen(true),
       closeCamera: () => setCameraOpen(false),
@@ -502,6 +652,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSavedIds((ids) =>
           ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
         ),
+      history,
+      stats,
+      outOfCreditsNotice,
+      dismissOutOfCreditsNotice: () => setOutOfCreditsNotice(false),
+      adsWatchedToday,
+      maxFreeAdsPerDay: MAX_FREE_ADS_PER_DAY,
+      watchAd: () => {
+        if (adsWatchedToday >= MAX_FREE_ADS_PER_DAY) return false
+        setAdsWatchedToday((n) => n + 1)
+        setCredits((c) => c + 1)
+        setOutOfCreditsNotice(false)
+        return true
+      },
     }
   }, [
     authReady,
@@ -515,6 +678,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     scanning,
     cameraOpen,
     savedIds,
+    history,
+    stats,
+    outOfCreditsNotice,
+    adsWatchedToday,
   ])
 
   return (

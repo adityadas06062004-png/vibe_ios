@@ -2,6 +2,7 @@
 
 import { Bookmark, ExternalLink } from 'lucide-react'
 import Image from 'next/image'
+import { openShopLink } from '@/lib/shop'
 import { cn } from '@/lib/utils'
 import { useApp, type Product } from './app-context'
 
@@ -51,6 +52,7 @@ export function ProductCard({ product }: { product: Product }) {
         </div>
         <button
           type="button"
+          onClick={() => openShopLink(product)}
           className={cn(
             'flex w-full items-center justify-center gap-1.5 rounded-full bg-primary py-2 text-xs font-semibold text-primary-foreground',
             'transition-transform active:scale-95',

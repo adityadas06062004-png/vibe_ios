@@ -5,6 +5,7 @@ import {
   Bookmark,
   ChevronRight,
   Crown,
+  Flame,
   LogOut,
   Palette,
   Plus,
@@ -14,11 +15,26 @@ import {
 } from 'lucide-react'
 import { useApp } from '@/components/app-context'
 
-const STYLE_DNA = ['Minimal', 'Neutral tones', 'Tailored', 'Street', 'Warm']
-
 export function ProfileScreen() {
-  const { isPro, setPro, credits, addCredits, openPaywall, savedIds, user, signOut } =
-    useApp()
+  const {
+    isPro,
+    setPro,
+    credits,
+    addCredits,
+    openPaywall,
+    savedIds,
+    user,
+    signOut,
+    stats,
+  } = useApp()
+
+  // Real Style DNA: the vibes you've actually scored well in, ranked by
+  // how often they show up — nothing hardcoded, and honestly empty for a
+  // brand-new account until there's history to learn from.
+  const styleDna = Object.entries(stats.vibeCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([vibe]) => vibe)
 
   return (
     <div className="px-5 pb-28 pt-4">
@@ -59,17 +75,17 @@ export function ProfileScreen() {
             ) : null}
           </div>
           <p className="text-sm text-muted-foreground">
-            {user?.handle ?? '@you'} · Style Lv. 4
+            {user?.handle ?? '@you'} · Style Lv. {stats.level}
           </p>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — all derived from actual rated looks, not placeholders */}
       <div className="mt-5 grid grid-cols-3 gap-3">
         {[
-          { label: 'Looks rated', value: '48' },
-          { label: 'Avg score', value: '89' },
-          { label: 'Followers', value: '1.2k' },
+          { label: 'Looks rated', value: `${stats.ratingsCount}` },
+          { label: 'Avg score', value: stats.ratingsCount ? `${stats.avgScore}` : '—' },
+          { label: 'Day streak', value: `${stats.streak}` },
         ].map((s) => (
           <div
             key={s.label}
@@ -161,29 +177,36 @@ export function ProfileScreen() {
         ) : null}
       </div>
 
-      {/* Style DNA */}
+      {/* Style DNA — built from your rating history, not a fixed list */}
       <div className="mt-4 rounded-3xl border border-white/8 bg-card p-5">
         <div className="flex items-center gap-2">
           <Palette className="size-4 text-primary" />
           <span className="text-sm font-medium">Your Style DNA</span>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {STYLE_DNA.map((t) => (
-            <span
-              key={t}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs"
-            >
-              {t}
-            </span>
-          ))}
-        </div>
+        {styleDna.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {styleDna.map((t) => (
+              <span
+                key={t}
+                className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Rate a few looks and your Style DNA will build itself from what
+            actually scores well on you.
+          </p>
+        )}
       </div>
 
       {/* List */}
       <div className="mt-4 overflow-hidden rounded-3xl border border-white/8 bg-card">
         {[
           { icon: Bookmark, label: 'Saved items', meta: `${savedIds.length}` },
-          { icon: Sparkles, label: 'Rating history', meta: '48' },
+          { icon: Sparkles, label: 'Rating history', meta: `${stats.ratingsCount}` },
           { icon: Settings, label: 'Preferences', meta: '' },
         ].map((row, i) => (
           <button

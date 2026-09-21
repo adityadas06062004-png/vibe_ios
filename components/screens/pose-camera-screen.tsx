@@ -15,17 +15,36 @@ import { cn } from '@/lib/utils'
 
 type Facing = 'user' | 'environment'
 
+// --- Lightweight, on-device "suggestion" heuristic -------------------------
+// This is NOT a real vision/outfit-recognition model — the app has none.
+// It samples the average brightness + warm/cool tint of the live frame and
+// maps that to a pose that tends to read well in that lighting. It's a
+// helpful nudge, not an AI judgement of your outfit or background. Swapping
+// this for real outfit-aware suggestions would mean sending frames to a
+// vision model on a backend.
+function suggestPoseId(brightness: number, warmth: number): string {
+  // brightness: 0 (dark) .. 255 (bright)
+  // warmth: negative = cooler/blue-ish light, positive = warmer/amber light
+  if (brightness < 90) return warmth >= 0 ? 'glance' : 'lean' // dim/evening
+  if (brightness > 175) return warmth >= 0 ? 'walk' : 'natural' // bright/daylight
+  return warmth >= 0 ? 'hip' : 'crossed' // mid light
+}
+
 export function PoseCameraScreen() {
   const { closeCamera, startScan } = useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const sampleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [facing, setFacing] = useState<Facing>('environment')
   const [ready, setReady] = useState(false)
   const [denied, setDenied] = useState(false)
   const [pose, setPose] = useState<Pose>(POSES[0])
   const [opacity, setOpacity] = useState(0.35)
+  const [suggestedId, setSuggestedId] = useState<string | null>(null)
+  const [autoFollow, setAutoFollow] = useState(true)
 
   // Start / restart the camera stream when facing changes.
   useEffect(() => {
@@ -69,6 +88,58 @@ export function PoseCameraScreen() {
     }
   }, [facing])
 
+  // Periodically sample the live frame for a rough lighting reading and
+  // update the suggested pose. Runs at low resolution, ~every 1.5s — cheap
+  // enough to not affect camera performance.
+  useEffect(() => {
+    if (!ready) return
+    if (!sampleCanvasRef.current) {
+      sampleCanvasRef.current = document.createElement('canvas')
+      sampleCanvasRef.current.width = 32
+      sampleCanvasRef.current.height = 24
+    }
+    const canvas = sampleCanvasRef.current
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+    function sample() {
+      const video = videoRef.current
+      if (!video || !ctx || video.readyState < 2) return
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        let r = 0
+        let g = 0
+        let b = 0
+        const pixels = data.length / 4
+        for (let i = 0; i < data.length; i += 4) {
+          r += data[i]
+          g += data[i + 1]
+          b += data[i + 2]
+        }
+        r /= pixels
+        g /= pixels
+        b /= pixels
+        const brightness = (r + g + b) / 3
+        const warmth = r - b
+        const id = suggestPoseId(brightness, warmth)
+        setSuggestedId(id)
+        if (autoFollow) {
+          const next = POSES.find((p) => p.id === id)
+          if (next) setPose((cur) => (cur.id === next.id ? cur : next))
+        }
+      } catch {
+        /* canvas read can fail on some WebViews — suggestion is best-effort */
+      }
+    }
+
+    sample()
+    sampleTimerRef.current = setInterval(sample, 1500)
+    return () => {
+      if (sampleTimerRef.current) clearInterval(sampleTimerRef.current)
+      sampleTimerRef.current = null
+    }
+  }, [ready, autoFollow])
+
   function capture() {
     const video = videoRef.current
     if (!video || !ready) return
@@ -97,7 +168,15 @@ export function PoseCameraScreen() {
     reader.readAsDataURL(file)
   }
 
+  function pickPoseManually(p: Pose) {
+    setPose(p)
+    // Once you choose for yourself, stop overriding your choice — the
+    // suggestion badge stays visible, it just won't auto-apply anymore.
+    setAutoFollow(false)
+  }
+
   const PoseGuide = pose.Guide
+  const suggestedPose = POSES.find((p) => p.id === suggestedId) ?? null
 
   return (
     <div className="fixed inset-0 z-50 mx-auto flex max-w-[440px] flex-col bg-black">
@@ -182,6 +261,7 @@ export function PoseCameraScreen() {
           <span className="flex items-center gap-1.5 rounded-full bg-black/40 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-md">
             <Sparkles className="size-3.5 text-primary" />
             {pose.name}
+            {autoFollow && suggestedPose?.id === pose.id ? ' · Suggested' : ''}
           </span>
           <button
             type="button"
@@ -215,7 +295,11 @@ export function PoseCameraScreen() {
       {/* Bottom controls */}
       <div className="shrink-0 bg-black px-4 pb-8 pt-4">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-white/60">Pick a pose, then line yourself up</p>
+          <p className="text-xs text-white/60">
+            {suggestedPose && suggestedPose.id !== pose.id
+              ? `Suggested for this light: ${suggestedPose.name}`
+              : 'Pick a pose, then line yourself up'}
+          </p>
         </div>
 
         {/* Pose picker */}
@@ -223,28 +307,36 @@ export function PoseCameraScreen() {
           {POSES.map((p) => {
             const Mini = p.Guide
             const active = p.id === pose.id
+            const isSuggestion = p.id === suggestedId && !active
             return (
               <button
                 key={p.id}
                 type="button"
-                onClick={() => setPose(p)}
+                onClick={() => pickPoseManually(p)}
                 className={cn(
-                  'flex w-16 shrink-0 flex-col items-center gap-1 rounded-2xl border p-2 transition-colors',
+                  'relative flex w-16 shrink-0 flex-col items-center gap-1 rounded-2xl border p-2 transition-colors',
                   active
                     ? 'border-primary bg-primary/15'
-                    : 'border-white/10 bg-white/[0.04]',
+                    : isSuggestion
+                      ? 'border-dashed border-primary/50 bg-white/[0.04]'
+                      : 'border-white/10 bg-white/[0.04]',
                 )}
               >
+                {isSuggestion ? (
+                  <span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-primary text-primary-foreground">
+                    <Sparkles className="size-2.5" />
+                  </span>
+                ) : null}
                 <Mini
                   className={cn(
                     'h-10 w-auto',
-                    active ? 'text-primary' : 'text-white/70',
+                    active || isSuggestion ? 'text-primary' : 'text-white/70',
                   )}
                 />
                 <span
                   className={cn(
                     'text-[9px] font-medium leading-tight',
-                    active ? 'text-primary' : 'text-white/60',
+                    active || isSuggestion ? 'text-primary' : 'text-white/60',
                   )}
                 >
                   {p.tag}
